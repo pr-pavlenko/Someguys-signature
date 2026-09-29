@@ -1,0 +1,100 @@
+name: Upgrade social feed images
+
+on:
+  push:
+    paths:
+      - ".github/workflows/upgrade-social-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+
+      - name: Upscale social creatives
+        run: |
+          set -e
+          mkdir -p /tmp/social-upscale
+
+          convert social-feed/post-1-creative-ads.jpg \
+            -filter Lanczos -resize 1080x1080! \
+            -unsharp 0x0.8+0.8+0.02 -quality 92 \
+            /tmp/social-upscale/post-1-creative-ads.jpg
+
+          convert social-feed/post-2-website.jpg \
+            -filter Lanczos -resize 1080x1080! \
+            -unsharp 0x0.8+0.8+0.02 -quality 92 \
+            /tmp/social-upscale/post-2-website.jpg
+
+          convert social-feed/post-3-automation.jpg \
+            -filter Lanczos -resize 1200x630 \
+            -background "#0b1115" -gravity center -extent 1200x630 \
+            -unsharp 0x0.8+0.8+0.02 -quality 92 \
+            /tmp/social-upscale/post-3-automation.jpg
+
+          mv /tmp/social-upscale/*.jpg social-feed/
+
+      - name: Refresh RSS media sizes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("social-feed/someguys-weekly.xml")
+          xml = p.read_text(encoding="utf-8")
+
+          files = [
+              ("post-1-creative-ads.jpg", Path("social-feed/post-1-creative-ads.jpg").stat().st_size),
+              ("post-2-website.jpg", Path("social-feed/post-2-website.jpg").stat().st_size),
+              ("post-3-automation.jpg", Path("social-feed/post-3-automation.jpg").stat().st_size),
+          ]
+
+          for filename, size in files:
+              # media:content fileSize
+              xml = re.sub(
+                  rf'(media:content url="[^"]*{re.escape(filename)}"[^>]*fileSize=")\d+(")',
+                  rf'\g<1>{size}\2',
+                  xml
+              )
+              # enclosure length
+              xml = re.sub(
+                  rf'(enclosure url="[^"]*{re.escape(filename)}" length=")\d+(")',
+                  rf'\g<1>{size}\2',
+                  xml
+              )
+
+          p.write_text(xml, encoding="utf-8")
+          PY
+
+      - name: Verify output
+        run: |
+          identify social-feed/post-1-creative-ads.jpg
+          identify social-feed/post-2-website.jpg
+          identify social-feed/post-3-automation.jpg
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          ET.parse("social-feed/someguys-weekly.xml")
+          print("RSS XML valid")
+          PY
+
+      - name: Commit upgraded files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add social-feed/post-1-creative-ads.jpg social-feed/post-2-website.jpg social-feed/post-3-automation.jpg social-feed/someguys-weekly.xml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Upgrade social feed image quality"
+            git push
+          fi
