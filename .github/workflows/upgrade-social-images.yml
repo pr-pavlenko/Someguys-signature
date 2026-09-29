@@ -16,27 +16,49 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ImageMagick
+      - name: Install image tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick
+          sudo apt-get install -y imagemagick ffmpeg libjpeg-turbo-progs
 
-      - name: Upscale social creatives
+      - name: Repair and upscale social creatives
+        shell: bash
         run: |
-          set -e
-          mkdir -p /tmp/social-upscale
+          set -euo pipefail
+          mkdir -p /tmp/social-repaired /tmp/social-upscale
 
-          convert social-feed/post-1-creative-ads.jpg \
+          repair() {
+            src="$1"
+            png="$2"
+
+            if ffmpeg -hide_banner -loglevel warning -err_detect ignore_err -y -i "$src" -frames:v 1 "$png"; then
+              return 0
+            fi
+
+            if djpeg -recover "$src" > "$png.ppm"; then
+              convert "$png.ppm" "$png"
+              return 0
+            fi
+
+            echo "Unable to repair $src" >&2
+            return 1
+          }
+
+          repair social-feed/post-1-creative-ads.jpg /tmp/social-repaired/post1.png
+          repair social-feed/post-2-website.jpg /tmp/social-repaired/post2.png
+          repair social-feed/post-3-automation.jpg /tmp/social-repaired/post3.png
+
+          convert /tmp/social-repaired/post1.png \
             -filter Lanczos -resize 1080x1080! \
             -unsharp 0x0.8+0.8+0.02 -quality 92 \
             /tmp/social-upscale/post-1-creative-ads.jpg
 
-          convert social-feed/post-2-website.jpg \
+          convert /tmp/social-repaired/post2.png \
             -filter Lanczos -resize 1080x1080! \
             -unsharp 0x0.8+0.8+0.02 -quality 92 \
             /tmp/social-upscale/post-2-website.jpg
 
-          convert social-feed/post-3-automation.jpg \
+          convert /tmp/social-repaired/post3.png \
             -filter Lanczos -resize 1200x630 \
             -background "#0b1115" -gravity center -extent 1200x630 \
             -unsharp 0x0.8+0.8+0.02 -quality 92 \
@@ -60,13 +82,11 @@ jobs:
           ]
 
           for filename, size in files:
-              # media:content fileSize
               xml = re.sub(
                   rf'(media:content url="[^"]*{re.escape(filename)}"[^>]*fileSize=")\d+(")',
                   rf'\g<1>{size}\2',
                   xml
               )
-              # enclosure length
               xml = re.sub(
                   rf'(enclosure url="[^"]*{re.escape(filename)}" length=")\d+(")',
                   rf'\g<1>{size}\2',
@@ -87,7 +107,7 @@ jobs:
           print("RSS XML valid")
           PY
 
-      - name: Commit upgraded files
+      - name: Commit repaired upgraded files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -95,6 +115,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Upgrade social feed image quality"
+            git commit -m "Repair and upgrade social feed images"
             git push
           fi
