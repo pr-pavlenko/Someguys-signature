@@ -1,0 +1,108 @@
+name: Stackposts Bridge
+
+on:
+  push:
+    paths:
+      - "stackposts-bridge/queue/*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stackposts-bridge
+  cancel-in-progress: false
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    env:
+      STACKPOSTS_BASE_URL: https://smm.someguys.agency/api/automation/v1
+      STACKPOSTS_API_KEY: ${{ secrets.STACKPOSTS_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify bridge secret
+        id: secret
+        shell: bash
+        run: |
+          if [ -z "${STACKPOSTS_API_KEY:-}" ]; then
+            echo "STACKPOSTS_API_KEY GitHub Actions secret is not configured." >&2
+            exit 1
+          fi
+
+      - name: Deliver queued jobs
+        shell: bash
+        run: |
+          set -u
+          mkdir -p stackposts-bridge/results
+
+          shopt -s nullglob
+          jobs=(stackposts-bridge/queue/*.json)
+
+          if [ "${#jobs[@]}" -eq 0 ]; then
+            echo "No jobs found."
+            exit 0
+          fi
+
+          had_error=0
+
+          for job in "${jobs[@]}"; do
+            id="$(jq -r '.idempotency_key // empty' "$job")"
+            if [ -z "$id" ]; then
+              echo "Missing idempotency_key in $job" >&2
+              had_error=1
+              continue
+            fi
+
+            result="stackposts-bridge/results/${id}.json"
+            if [ -f "$result" ]; then
+              echo "Result already exists for $id; skipping."
+              continue
+            fi
+
+            payload="$(jq -c 'del(.idempotency_key, .bridge)' "$job")"
+
+            body_file="$(mktemp)"
+            http_code="$(
+              curl -sS                 -o "$body_file"                 -w "%{http_code}"                 -X POST "${STACKPOSTS_BASE_URL}/posts"                 -H "Authorization: Bearer ${STACKPOSTS_API_KEY}"                 -H "Idempotency-Key: ${id}"                 -H "Accept: application/json"                 -H "Content-Type: application/json"                 --data "$payload" || printf "000"
+            )"
+
+            if jq -e . "$body_file" >/dev/null 2>&1; then
+              body="$(cat "$body_file")"
+            else
+              body="$(jq -Rn --arg s "$(cat "$body_file")" '$s')"
+            fi
+
+            if [ "$http_code" = "201" ]; then
+              ok=true
+            else
+              ok=false
+              had_error=1
+            fi
+
+            jq -n               --arg id "$id"               --arg queue_file "$job"               --arg http_code "$http_code"               --arg processed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"               --argjson ok "$ok"               --argjson response "$body"               '{
+                idempotency_key: $id,
+                queue_file: $queue_file,
+                ok: $ok,
+                http_code: ($http_code|tonumber? // $http_code),
+                processed_at: $processed_at,
+                response: $response
+              }' > "$result"
+
+            rm -f "$body_file"
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stackposts-bridge/results
+          if ! git diff --cached --quiet; then
+            git commit -m "Record Stackposts bridge result"
+            git push
+          fi
+
+          exit "$had_error"
