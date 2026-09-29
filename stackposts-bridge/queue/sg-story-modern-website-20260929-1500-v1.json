@@ -1,0 +1,24 @@
+{
+  "idempotency_key": "sg-story-modern-website-20260929-1500-v1",
+  "account_ids": [
+    3,
+    4
+  ],
+  "caption": "A modern website helps your business make a strong first impression, build trust, and turn visitors into customers.\n\nhttps://someguys.agency/\n\n#WebDesign #ModernWebsite #SomeguysAgency",
+  "media_urls": [
+    "https://raw.githubusercontent.com/pr-pavlenko/Someguys-signature/main/social-feed/post-2-website.jpg"
+  ],
+  "mode": "scheduled",
+  "schedule_at": "2026-09-29T15:00:00-04:00",
+  "timezone": "America/Detroit",
+  "network_options": {
+    "facebook": {
+      "post_to": "stories"
+    },
+    "instagram": {
+      "post_to": "stories"
+    }
+  },
+  "source": "chatgpt",
+  "external_reference": "sg-story-modern-website-20260929-1500"
+}
