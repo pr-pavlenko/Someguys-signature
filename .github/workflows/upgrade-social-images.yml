@@ -118,3 +118,5 @@ jobs:
             git commit -m "Repair and upgrade social feed images"
             git push
           fi
+
+# source-repaired
